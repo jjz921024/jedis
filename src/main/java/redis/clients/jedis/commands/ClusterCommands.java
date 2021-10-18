@@ -7,6 +7,8 @@ import redis.clients.jedis.args.ClusterFailoverOption;
 
 public interface ClusterCommands {
 
+  String asking();
+
   String readonly();
 
   String readwrite();
@@ -52,9 +54,7 @@ public interface ClusterCommands {
   @Deprecated
   List<String> clusterSlaves(String nodeId);
 
-  default String clusterFailover() {
-    return clusterFailover(null);
-  }
+  String clusterFailover();
 
   String clusterFailover(ClusterFailoverOption failoverOption);
 

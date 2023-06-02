@@ -1,18 +1,26 @@
 package redis.clients.jedis;
 
+import io.netty.buffer.ByteBuf;
+import redis.clients.jedis.args.Rawable;
+import redis.clients.jedis.commands.ProtocolCommand;
+import redis.clients.jedis.exceptions.JedisAccessControlException;
+import redis.clients.jedis.exceptions.JedisAskDataException;
+import redis.clients.jedis.exceptions.JedisBusyException;
+import redis.clients.jedis.exceptions.JedisClusterException;
+import redis.clients.jedis.exceptions.JedisConnectionException;
+import redis.clients.jedis.exceptions.JedisDataException;
+import redis.clients.jedis.exceptions.JedisMovedDataException;
+import redis.clients.jedis.exceptions.JedisNoScriptException;
+import redis.clients.jedis.util.SafeEncoder;
+import redis.clients.jedis.util.SocketChannelReader;
+import redis.clients.jedis.util.SocketChannelWriter;
+
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-
-import redis.clients.jedis.exceptions.*;
-import redis.clients.jedis.args.Rawable;
-import redis.clients.jedis.commands.ProtocolCommand;
-import redis.clients.jedis.util.RedisInputStream;
-import redis.clients.jedis.util.RedisOutputStream;
-import redis.clients.jedis.util.SafeEncoder;
 
 public final class Protocol {
 
@@ -52,7 +60,7 @@ public final class Protocol {
     // this prevent the class from instantiation
   }
 
-  public static void sendCommand(final RedisOutputStream os, CommandArguments args) {
+  public static void sendCommand(final SocketChannelWriter os, CommandArguments args) {
     try {
       os.write(ASTERISK_BYTE);
       os.writeIntCrLf(args.size());
@@ -68,7 +76,22 @@ public final class Protocol {
     }
   }
 
-  private static void processError(final RedisInputStream is) {
+  public static void sendCommand(final SocketChannelWriter os, ByteBufCommandArguments args) {
+    try {
+      os.write(ASTERISK_BYTE);
+      os.writeIntCrLf(args.size());
+      for (ByteBuf arg : args) {
+        os.write(DOLLAR_BYTE);
+        os.writeIntCrLf(arg.readableBytes());
+        os.write(arg);
+        os.writeCrLf();
+      }
+    } catch (IOException e) {
+      throw new JedisConnectionException(e);
+    }
+  }
+
+  private static void processError(final SocketChannelReader is) {
     String message = is.readLine();
     // TODO: I'm not sure if this is the best way to do this.
     // Maybe Read only first 5 bytes instead?
@@ -96,7 +119,7 @@ public final class Protocol {
     throw new JedisDataException(message);
   }
 
-  public static String readErrorLineIfPossible(RedisInputStream is) {
+  public static String readErrorLineIfPossible(SocketChannelReader is) {
     final byte b = is.readByte();
     // if buffer contains other type of response, just ignore.
     if (b != MINUS_BYTE) {
@@ -122,7 +145,7 @@ public final class Protocol {
     return response;
   }
 
-  private static Object process(final RedisInputStream is) {
+  private static Object process(final SocketChannelReader is) {
     final byte b = is.readByte();
     switch (b) {
       case PLUS_BYTE:
@@ -141,25 +164,19 @@ public final class Protocol {
     }
   }
 
-  private static byte[] processStatusCodeReply(final RedisInputStream is) {
+  private static ByteBuf processStatusCodeReply(final SocketChannelReader is) {
     return is.readLineBytes();
   }
 
-  private static byte[] processBulkReply(final RedisInputStream is) {
+  private static ByteBuf processBulkReply(final SocketChannelReader is) {
     final int len = is.readIntCrLf();
     if (len == -1) {
       return null;
     }
 
-    final byte[] read = new byte[len];
-    int offset = 0;
-    while (offset < len) {
-      final int size = is.read(read, offset, (len - offset));
-      if (size == -1) {
-        throw new JedisConnectionException("It seems like server has closed the connection.");
-      }
-      offset += size;
-    }
+    // 替换传入byte[]方式
+    // read(byte[] b, int off, int len)
+    ByteBuf read = is.read(len);
 
     // read 2 more bytes for the command delimiter
     is.readByte();
@@ -168,11 +185,11 @@ public final class Protocol {
     return read;
   }
 
-  private static Long processInteger(final RedisInputStream is) {
+  private static ByteBuf processInteger(final SocketChannelReader is) {
     return is.readLongCrLf();
   }
 
-  private static List<Object> processMultiBulkReply(final RedisInputStream is) {
+  private static List<Object> processMultiBulkReply(final SocketChannelReader is) {
     final int num = is.readIntCrLf();
     if (num == -1) {
       return null;
@@ -188,7 +205,7 @@ public final class Protocol {
     return ret;
   }
 
-  public static Object read(final RedisInputStream is) {
+  public static Object read(final SocketChannelReader is) {
     return process(is);
   }
 

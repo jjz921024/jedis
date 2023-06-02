@@ -12,6 +12,9 @@ import java.util.Set;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufUtil;
 import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
 
 import redis.clients.jedis.exceptions.JedisConnectionException;
@@ -193,8 +196,8 @@ public class JedisClusterInfoCache {
   }
 
   private HostAndPort generateHostAndPort(List<Object> hostInfos) {
-    String host = SafeEncoder.encode((byte[]) hostInfos.get(0));
-    int port = ((Long) hostInfos.get(1)).intValue();
+    String host = parseString(hostInfos.get(0));
+    int port = parseInteger(hostInfos.get(1));
     return new HostAndPort(host, port);
   }
 
@@ -323,10 +326,32 @@ public class JedisClusterInfoCache {
 
   private List<Integer> getAssignedSlotArray(List<Object> slotInfo) {
     List<Integer> slotNums = new ArrayList<>();
-    for (int slot = ((Long) slotInfo.get(0)).intValue(); slot <= ((Long) slotInfo.get(1))
-        .intValue(); slot++) {
+    int startSlot = parseInteger(slotInfo.get(0));
+    int endSlot = parseInteger(slotInfo.get(1));
+    for (int slot = startSlot; slot <= endSlot; slot++) {
       slotNums.add(slot);
     }
     return slotNums;
   }
+
+  private int parseInteger(Object i) {
+    int result;
+    if (i instanceof ByteBuf) {
+      result = Integer.parseInt(new String(ByteBufUtil.getBytes((ByteBuf) i)));
+    } else {
+      result = (int) i;
+    }
+    return result;
+  }
+
+  private String parseString(Object s) {
+    String result;
+    if (s instanceof ByteBuf) {
+      result = new String(ByteBufUtil.getBytes((ByteBuf) s));
+    } else {
+      result = SafeEncoder.encode((byte[]) s);
+    }
+    return result;
+  }
+
 }

@@ -1,25 +1,10 @@
 package redis.clients.jedis;
 
-import static redis.clients.jedis.Protocol.Command.*;
-import static redis.clients.jedis.Protocol.Keyword.*;
-import static redis.clients.jedis.Protocol.SentinelKeyword.*;
-import static redis.clients.jedis.Protocol.toByteArray;
-import static redis.clients.jedis.util.SafeEncoder.encode;
-
-import java.io.Closeable;
-import java.net.URI;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Set;
-import java.util.stream.Collectors;
-
-import javax.net.ssl.HostnameVerifier;
-import javax.net.ssl.SSLParameters;
-import javax.net.ssl.SSLSocketFactory;
-
-import redis.clients.jedis.Protocol.*;
+import io.netty.buffer.ByteBuf;
+import redis.clients.jedis.Protocol.ClusterKeyword;
+import redis.clients.jedis.Protocol.Command;
+import redis.clients.jedis.Protocol.Keyword;
+import redis.clients.jedis.Protocol.SentinelKeyword;
 import redis.clients.jedis.args.*;
 import redis.clients.jedis.commands.*;
 import redis.clients.jedis.exceptions.InvalidURIException;
@@ -30,6 +15,24 @@ import redis.clients.jedis.resps.*;
 import redis.clients.jedis.util.JedisURIHelper;
 import redis.clients.jedis.util.KeyValue;
 import redis.clients.jedis.util.Pool;
+
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.SSLParameters;
+import javax.net.ssl.SSLSocketFactory;
+import java.io.Closeable;
+import java.net.URI;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import static redis.clients.jedis.Protocol.Command.*;
+import static redis.clients.jedis.Protocol.Keyword.*;
+import static redis.clients.jedis.Protocol.SentinelKeyword.*;
+import static redis.clients.jedis.Protocol.toByteArray;
+import static redis.clients.jedis.util.SafeEncoder.encode;
 
 public class Jedis implements ServerCommands, DatabaseCommands, JedisCommands, JedisBinaryCommands,
     ControlCommands, ControlBinaryCommands, ClusterCommands, ModuleCommands, GenericControlCommands,
@@ -4815,6 +4818,11 @@ public class Jedis implements ServerCommands, DatabaseCommands, JedisCommands, J
 
   public Object sendCommand(ProtocolCommand cmd) {
     return sendCommand(cmd, DUMMY_ARRAY);
+  }
+
+  public Object sendCommand(ProtocolCommand cmd, ByteBuf... args) {
+    connection.sendCommand(cmd, args);
+    return connection.getOne();
   }
 
   /**

@@ -1,5 +1,17 @@
 package redis.clients.jedis;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufUtil;
+import redis.clients.jedis.args.Rawable;
+import redis.clients.jedis.commands.ProtocolCommand;
+import redis.clients.jedis.exceptions.JedisConnectionException;
+import redis.clients.jedis.exceptions.JedisDataException;
+import redis.clients.jedis.exceptions.JedisException;
+import redis.clients.jedis.util.IOUtils;
+import redis.clients.jedis.util.SafeEncoder;
+import redis.clients.jedis.util.SocketChannelReader;
+import redis.clients.jedis.util.SocketChannelWriter;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.net.Socket;
@@ -7,23 +19,13 @@ import java.net.SocketException;
 import java.util.ArrayList;
 import java.util.List;
 
-import redis.clients.jedis.args.Rawable;
-import redis.clients.jedis.commands.ProtocolCommand;
-import redis.clients.jedis.exceptions.JedisConnectionException;
-import redis.clients.jedis.exceptions.JedisDataException;
-import redis.clients.jedis.exceptions.JedisException;
-import redis.clients.jedis.util.IOUtils;
-import redis.clients.jedis.util.RedisInputStream;
-import redis.clients.jedis.util.RedisOutputStream;
-import redis.clients.jedis.util.SafeEncoder;
-
 public class Connection implements Closeable {
 
   private ConnectionPool memberOf;
   private final JedisSocketFactory socketFactory;
   private Socket socket;
-  private RedisOutputStream outputStream;
-  private RedisInputStream inputStream;
+  private SocketChannelReader inputStream;
+  private SocketChannelWriter outputStream;
   private int soTimeout = 0;
   private int infiniteSoTimeout = 0;
   private boolean broken = false;
@@ -174,14 +176,42 @@ public class Connection implements Closeable {
     }
   }
 
+  public void sendCommand(ProtocolCommand cmd, ByteBuf... args) {
+    try {
+      connect();
+      ByteBufCommandArguments commandArguments = new ByteBufCommandArguments(cmd).addObjects(args);
+      Protocol.sendCommand(outputStream, commandArguments);
+    } catch (JedisConnectionException ex) {
+      /*
+       * When client send request which formed by invalid protocol, Redis send back error message
+       * before close connection. We try to read it to provide reason of failure.
+       */
+      try {
+        String errorMessage = Protocol.readErrorLineIfPossible(inputStream);
+        if (errorMessage != null && errorMessage.length() > 0) {
+          ex = new JedisConnectionException(errorMessage, ex.getCause());
+        }
+      } catch (Exception e) {
+        /*
+         * Catch any IOException or JedisConnectionException occurred from InputStream#read and just
+         * ignore. This approach is safe because reading error message is optional and connection
+         * will eventually be closed.
+         */
+      }
+      // Any other exceptions related to connection?
+      broken = true;
+      throw ex;
+    }
+  }
+
   public void connect() throws JedisConnectionException {
     if (!isConnected()) {
       try {
         socket = socketFactory.createSocket();
         soTimeout = socket.getSoTimeout(); //?
 
-        outputStream = new RedisOutputStream(socket.getOutputStream());
-        inputStream = new RedisInputStream(socket.getInputStream());
+        inputStream = new SocketChannelReader(socket.getChannel());
+        outputStream = new SocketChannelWriter(socket.getChannel());
       } catch (JedisConnectionException jce) {
         broken = true;
         throw jce;
@@ -240,7 +270,13 @@ public class Connection implements Closeable {
 
   public String getStatusCodeReply() {
     flush();
-    final byte[] resp = (byte[]) readProtocolWithCheckingBroken();
+    Object response = readProtocolWithCheckingBroken();
+    byte[] resp = null;
+    if (response instanceof byte[]) {
+      resp = (byte[]) response;
+    } else if (response instanceof ByteBuf) {
+      resp = ByteBufUtil.getBytes(((ByteBuf) response));
+    }
     if (null == resp) {
       return null;
     } else {
@@ -259,12 +295,26 @@ public class Connection implements Closeable {
 
   public byte[] getBinaryBulkReply() {
     flush();
-    return (byte[]) readProtocolWithCheckingBroken();
+    Object response = readProtocolWithCheckingBroken();
+    byte[] resp = null;
+    if (response instanceof byte[]) {
+      resp = (byte[]) response;
+    } else if (response instanceof ByteBuf) {
+      resp = ByteBufUtil.getBytes(((ByteBuf) response));
+    }
+    return resp;
   }
 
   public Long getIntegerReply() {
     flush();
-    return (Long) readProtocolWithCheckingBroken();
+    Object response = readProtocolWithCheckingBroken();
+    Long resp = null;
+    if (response instanceof Long) {
+      resp = (Long) response;
+    } else if (response instanceof ByteBuf) {
+      resp = ((ByteBuf) response).readLong();
+    }
+    return resp;
   }
 
   public List<String> getMultiBulkReply() {
@@ -274,7 +324,16 @@ public class Connection implements Closeable {
   @SuppressWarnings("unchecked")
   public List<byte[]> getBinaryMultiBulkReply() {
     flush();
-    return (List<byte[]>) readProtocolWithCheckingBroken();
+    ArrayList<byte[]> resp = new ArrayList<>();
+    List<Object> response = (List<Object>) readProtocolWithCheckingBroken();
+    for (Object o : response) {
+      if (o instanceof byte[]) {
+        resp.add((byte[]) o);
+      } else if (o instanceof ByteBuf) {
+        resp.add(ByteBufUtil.getBytes(((ByteBuf) response)));
+      }
+    }
+    return resp;
   }
 
   @SuppressWarnings("unchecked")

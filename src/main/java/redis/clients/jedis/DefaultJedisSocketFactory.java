@@ -1,18 +1,20 @@
 package redis.clients.jedis;
 
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.Socket;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
+import redis.clients.jedis.exceptions.JedisConnectionException;
+import redis.clients.jedis.util.IOUtils;
+
 import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
-
-import redis.clients.jedis.exceptions.JedisConnectionException;
-import redis.clients.jedis.util.IOUtils;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.nio.channels.AsynchronousSocketChannel;
+import java.nio.channels.SocketChannel;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 public class DefaultJedisSocketFactory implements JedisSocketFactory {
 
@@ -63,7 +65,10 @@ public class DefaultJedisSocketFactory implements JedisSocketFactory {
     JedisConnectionException jce = new JedisConnectionException("Failed to connect to any host resolved for DNS name.");
     for (InetAddress host : hosts) {
       try {
-        Socket socket = new Socket();
+        //Socket socket = new Socket();
+        SocketChannel socketChannel = SocketChannel.open();
+        socketChannel.configureBlocking(true);
+        Socket socket = socketChannel.socket();
 
         socket.setReuseAddress(true);
         socket.setKeepAlive(true); // Will monitor the TCP connection is valid

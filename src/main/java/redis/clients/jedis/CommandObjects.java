@@ -39,6 +39,10 @@ public class CommandObjects {
     return new CommandArguments(command);
   }
 
+  protected ByteBufCommandArguments byteBufCommandArguments(ProtocolCommand command) {
+    return new ByteBufCommandArguments(command);
+  }
+
   // Key commands
   public final CommandObject<Boolean> exists(String key) {
     return new CommandObject<>(commandArguments(Command.EXISTS).key(key), BuilderFactory.BOOLEAN);

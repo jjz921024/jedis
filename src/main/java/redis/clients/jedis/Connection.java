@@ -118,6 +118,11 @@ public class Connection implements Closeable {
     return getOne();
   }
 
+  public Object executeCommand(final ByteBufCommandArguments args) {
+    sendCommand(args);
+    return getOne();
+  }
+
   public <T> T executeCommand(final CommandObject<T> commandObject) {
     final CommandArguments args = commandObject.getArguments();
     sendCommand(args);
@@ -176,11 +181,10 @@ public class Connection implements Closeable {
     }
   }
 
-  public void sendCommand(ProtocolCommand cmd, ByteBuf... args) {
+  public void sendCommand(ByteBufCommandArguments args) {
     try {
       connect();
-      ByteBufCommandArguments commandArguments = new ByteBufCommandArguments(cmd).addObjects(args);
-      Protocol.sendCommand(outputStream, commandArguments);
+      Protocol.sendCommand(outputStream, args);
     } catch (JedisConnectionException ex) {
       /*
        * When client send request which formed by invalid protocol, Redis send back error message
@@ -202,6 +206,11 @@ public class Connection implements Closeable {
       broken = true;
       throw ex;
     }
+  }
+
+  public void sendCommand(ProtocolCommand cmd, ByteBuf... args) {
+    ByteBufCommandArguments commandArguments = new ByteBufCommandArguments(cmd).addObjects(args);
+    sendCommand(commandArguments);
   }
 
   public void connect() throws JedisConnectionException {

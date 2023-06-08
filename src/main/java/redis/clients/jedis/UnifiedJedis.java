@@ -1,44 +1,106 @@
 package redis.clients.jedis;
 
-import java.net.URI;
-import java.time.Duration;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.regex.Pattern;
+import io.netty.buffer.ByteBuf;
 import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
 import org.json.JSONArray;
-
-import redis.clients.jedis.args.*;
+import redis.clients.jedis.args.BitCountOption;
+import redis.clients.jedis.args.BitOP;
+import redis.clients.jedis.args.ExpiryOption;
+import redis.clients.jedis.args.FlushMode;
+import redis.clients.jedis.args.FunctionRestorePolicy;
+import redis.clients.jedis.args.GeoUnit;
+import redis.clients.jedis.args.ListDirection;
+import redis.clients.jedis.args.ListPosition;
+import redis.clients.jedis.args.SortedSetOption;
 import redis.clients.jedis.bloom.BFInsertParams;
 import redis.clients.jedis.bloom.BFReserveParams;
 import redis.clients.jedis.bloom.CFInsertParams;
 import redis.clients.jedis.bloom.CFReserveParams;
-import redis.clients.jedis.commands.JedisCommands;
 import redis.clients.jedis.commands.JedisBinaryCommands;
+import redis.clients.jedis.commands.JedisCommands;
 import redis.clients.jedis.commands.ProtocolCommand;
+import redis.clients.jedis.commands.RedisModuleCommands;
 import redis.clients.jedis.commands.SampleBinaryKeyedCommands;
 import redis.clients.jedis.commands.SampleKeyedCommands;
-import redis.clients.jedis.commands.RedisModuleCommands;
-import redis.clients.jedis.executors.*;
+import redis.clients.jedis.executors.ClusterCommandExecutor;
+import redis.clients.jedis.executors.CommandExecutor;
+import redis.clients.jedis.executors.DefaultCommandExecutor;
+import redis.clients.jedis.executors.RetryableCommandExecutor;
+import redis.clients.jedis.executors.SimpleCommandExecutor;
 import redis.clients.jedis.graph.GraphCommandObjects;
 import redis.clients.jedis.graph.ResultSet;
 import redis.clients.jedis.json.JsonSetParams;
 import redis.clients.jedis.json.Path;
 import redis.clients.jedis.json.Path2;
-import redis.clients.jedis.params.*;
-import redis.clients.jedis.providers.*;
-import redis.clients.jedis.resps.*;
+import redis.clients.jedis.params.BitPosParams;
+import redis.clients.jedis.params.GeoAddParams;
+import redis.clients.jedis.params.GeoRadiusParam;
+import redis.clients.jedis.params.GeoRadiusStoreParam;
+import redis.clients.jedis.params.GeoSearchParam;
+import redis.clients.jedis.params.GetExParams;
+import redis.clients.jedis.params.LCSParams;
+import redis.clients.jedis.params.LPosParams;
+import redis.clients.jedis.params.MigrateParams;
+import redis.clients.jedis.params.RestoreParams;
+import redis.clients.jedis.params.ScanParams;
+import redis.clients.jedis.params.SetParams;
+import redis.clients.jedis.params.SortingParams;
+import redis.clients.jedis.params.StrAlgoLCSParams;
+import redis.clients.jedis.params.XAddParams;
+import redis.clients.jedis.params.XAutoClaimParams;
+import redis.clients.jedis.params.XClaimParams;
+import redis.clients.jedis.params.XPendingParams;
+import redis.clients.jedis.params.XReadGroupParams;
+import redis.clients.jedis.params.XReadParams;
+import redis.clients.jedis.params.XTrimParams;
+import redis.clients.jedis.params.ZAddParams;
+import redis.clients.jedis.params.ZIncrByParams;
+import redis.clients.jedis.params.ZParams;
+import redis.clients.jedis.params.ZRangeParams;
+import redis.clients.jedis.providers.ClusterConnectionProvider;
+import redis.clients.jedis.providers.ConnectionProvider;
+import redis.clients.jedis.providers.PooledConnectionProvider;
+import redis.clients.jedis.providers.ShardedConnectionProvider;
+import redis.clients.jedis.resps.FunctionStats;
+import redis.clients.jedis.resps.GeoRadiusResponse;
+import redis.clients.jedis.resps.KeyedListElement;
+import redis.clients.jedis.resps.KeyedZSetElement;
+import redis.clients.jedis.resps.LCSMatchResult;
+import redis.clients.jedis.resps.LibraryInfo;
+import redis.clients.jedis.resps.ScanResult;
+import redis.clients.jedis.resps.StreamConsumersInfo;
+import redis.clients.jedis.resps.StreamEntry;
+import redis.clients.jedis.resps.StreamFullInfo;
+import redis.clients.jedis.resps.StreamGroupInfo;
+import redis.clients.jedis.resps.StreamInfo;
+import redis.clients.jedis.resps.StreamPendingEntry;
+import redis.clients.jedis.resps.StreamPendingSummary;
+import redis.clients.jedis.resps.Tuple;
 import redis.clients.jedis.search.IndexOptions;
 import redis.clients.jedis.search.Query;
 import redis.clients.jedis.search.Schema;
 import redis.clients.jedis.search.SearchResult;
 import redis.clients.jedis.search.aggr.AggregationBuilder;
 import redis.clients.jedis.search.aggr.AggregationResult;
-import redis.clients.jedis.timeseries.*;
+import redis.clients.jedis.timeseries.AggregationType;
+import redis.clients.jedis.timeseries.TSAlterParams;
+import redis.clients.jedis.timeseries.TSCreateParams;
+import redis.clients.jedis.timeseries.TSElement;
+import redis.clients.jedis.timeseries.TSKeyValue;
+import redis.clients.jedis.timeseries.TSKeyedElements;
+import redis.clients.jedis.timeseries.TSMGetParams;
+import redis.clients.jedis.timeseries.TSMRangeParams;
+import redis.clients.jedis.timeseries.TSRangeParams;
 import redis.clients.jedis.util.IOUtils;
 import redis.clients.jedis.util.JedisURIHelper;
 import redis.clients.jedis.util.KeyValue;
+
+import java.net.URI;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 public class UnifiedJedis implements JedisCommands, JedisBinaryCommands,
     SampleKeyedCommands, SampleBinaryKeyedCommands, RedisModuleCommands,
@@ -4153,6 +4215,10 @@ public class UnifiedJedis implements JedisCommands, JedisBinaryCommands,
     return executeCommand(commandObjects.commandArguments(cmd).addObjects((Object[]) args).processKey(sampleKey));
   }
 
+  public Object sendCommand(byte[] sampleKey, ProtocolCommand cmd, ByteBuf... args) {
+    return executor.executeCommand(commandObjects.byteBufCommandArguments(cmd).addObjects(args).processKey(sampleKey));
+  }
+
   public Object sendBlockingCommand(String sampleKey, ProtocolCommand cmd, String... args) {
     return executeCommand(commandObjects.commandArguments(cmd).addObjects((Object[]) args).blocking().processKey(sampleKey));
   }
@@ -4160,4 +4226,5 @@ public class UnifiedJedis implements JedisCommands, JedisBinaryCommands,
   public Object executeCommand(CommandArguments args) {
     return executeCommand(new CommandObject<>(args, BuilderFactory.RAW_OBJECT));
   }
+
 }

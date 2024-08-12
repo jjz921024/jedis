@@ -4,9 +4,13 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.net.Socket;
 import java.net.SocketException;
+import java.nio.channels.SocketChannel;
 import java.util.ArrayList;
 import java.util.List;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.CompositeByteBuf;
+import io.netty.buffer.PooledByteBufAllocator;
 import redis.clients.jedis.args.Rawable;
 import redis.clients.jedis.commands.ProtocolCommand;
 import redis.clients.jedis.exceptions.JedisConnectionException;
@@ -17,11 +21,16 @@ import redis.clients.jedis.util.RedisInputStream;
 import redis.clients.jedis.util.RedisOutputStream;
 import redis.clients.jedis.util.SafeEncoder;
 
+import static redis.clients.jedis.Protocol.ASTERISK_BYTEBUF;
+import static redis.clients.jedis.Protocol.DOLLAR_BYTEBUF;
+import static redis.clients.jedis.Protocol.EOL_BYTEBUF;
+
 public class Connection implements Closeable {
 
   private ConnectionPool memberOf;
   private final JedisSocketFactory socketFactory;
   private Socket socket;
+  private SocketChannel channel;
   private RedisOutputStream outputStream;
   private RedisInputStream inputStream;
   private int soTimeout = 0;
@@ -174,12 +183,38 @@ public class Connection implements Closeable {
     }
   }
 
+  // ByteBuf 相关方法
+  public Object executeCommand(ByteBufCmdArgs args) {
+    try {
+      connect();
+      // todo: size pooled   addComp
+      CompositeByteBuf composite = new CompositeByteBuf(PooledByteBufAllocator.DEFAULT, true, args.size());
+      composite.writeBytes(ASTERISK_BYTEBUF.resetReaderIndex());
+      composite.writeBytes(Integer.toString(args.size()).getBytes());
+      composite.writeBytes(EOL_BYTEBUF.resetReaderIndex());
+      for (ByteBuf arg : args) {
+        composite.writeBytes(DOLLAR_BYTEBUF.resetReaderIndex());
+        composite.writeBytes(Integer.toString(arg.readableBytes()).getBytes());
+        composite.writeBytes(EOL_BYTEBUF.resetReaderIndex());
+        composite.writeBytes(arg);
+        composite.writeBytes(EOL_BYTEBUF.resetReaderIndex());
+      }
+
+      composite.readBytes(channel, composite.readableBytes());
+      return getOneByteBuf();
+    } catch (IOException ex) {
+      broken = true;
+      throw new RuntimeException(ex);
+    }
+  }
+
   public void connect() throws JedisConnectionException {
     if (!isConnected()) {
       try {
         socket = socketFactory.createSocket();
         soTimeout = socket.getSoTimeout(); //?
 
+        channel = socket.getChannel();
         outputStream = new RedisOutputStream(socket.getOutputStream());
         inputStream = new RedisInputStream(socket.getInputStream());
       } catch (JedisConnectionException jce) {
@@ -296,6 +331,20 @@ public class Connection implements Closeable {
   public Object getOne() {
     flush();
     return readProtocolWithCheckingBroken();
+  }
+
+  public Object getOneByteBuf() {
+    flush();
+    if (broken) {
+      throw new JedisConnectionException("Attempting to read from a broken connection");
+    }
+
+    try {
+      return Protocol.readByteBuf(channel, inputStream);
+    } catch (JedisConnectionException exc) {
+      broken = true;
+      throw exc;
+    }
   }
 
   protected void flush() {

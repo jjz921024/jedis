@@ -1,12 +1,16 @@
 package redis.clients.jedis;
 
 import java.io.IOException;
+import java.nio.channels.SocketChannel;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.PooledByteBufAllocator;
+import io.netty.buffer.Unpooled;
 import redis.clients.jedis.exceptions.*;
 import redis.clients.jedis.args.Rawable;
 import redis.clients.jedis.commands.ProtocolCommand;
@@ -31,6 +35,10 @@ public final class Protocol {
   public static final byte MINUS_BYTE = '-';
   public static final byte COLON_BYTE = ':';
 
+  public static final ByteBuf DOLLAR_BYTEBUF = Unpooled.unreleasableBuffer(Unpooled.wrappedBuffer(new byte[]{DOLLAR_BYTE})).asReadOnly();
+  public static final ByteBuf ASTERISK_BYTEBUF = Unpooled.unreleasableBuffer(Unpooled.wrappedBuffer(new byte[]{ASTERISK_BYTE})).asReadOnly();
+  public static final ByteBuf EOL_BYTEBUF = Unpooled.unreleasableBuffer(Unpooled.wrappedBuffer(new byte[]{'\r', '\n'})).asReadOnly();
+
   public static final byte[] BYTES_TRUE = toByteArray(1);
   public static final byte[] BYTES_FALSE = toByteArray(0);
   public static final byte[] BYTES_TILDE = SafeEncoder.encode("~");
@@ -40,13 +48,13 @@ public final class Protocol {
   public static final byte[] POSITIVE_INFINITY_BYTES = "+inf".getBytes();
   public static final byte[] NEGATIVE_INFINITY_BYTES = "-inf".getBytes();
 
-  private static final String ASK_PREFIX = "ASK ";
-  private static final String MOVED_PREFIX = "MOVED ";
-  private static final String CLUSTERDOWN_PREFIX = "CLUSTERDOWN ";
-  private static final String BUSY_PREFIX = "BUSY ";
-  private static final String NOSCRIPT_PREFIX = "NOSCRIPT ";
-  private static final String WRONGPASS_PREFIX = "WRONGPASS";
-  private static final String NOPERM_PREFIX = "NOPERM";
+  public static final String ASK_PREFIX = "ASK ";
+  public static final String MOVED_PREFIX = "MOVED ";
+  public static final String CLUSTERDOWN_PREFIX = "CLUSTERDOWN ";
+  public static final String BUSY_PREFIX = "BUSY ";
+  public static final String NOSCRIPT_PREFIX = "NOSCRIPT ";
+  public static final String WRONGPASS_PREFIX = "WRONGPASS";
+  public static final String NOPERM_PREFIX = "NOPERM";
 
   private Protocol() {
     // this prevent the class from instantiation
@@ -139,6 +147,62 @@ public final class Protocol {
       default:
         throw new JedisConnectionException("Unknown reply: " + (char) b);
     }
+  }
+
+  public static Object readByteBuf(final SocketChannel channel, final RedisInputStream is) {
+    final byte b = is.readByte();
+    switch (b) {
+      case PLUS_BYTE:
+        return processStatusCodeReply(is);
+      case DOLLAR_BYTE:
+        return processBulkReply(channel, is);
+      case ASTERISK_BYTE:
+        return processMultiBulkReply(channel, is);
+      case COLON_BYTE:
+        return processInteger(is);
+      case MINUS_BYTE:
+        processError(is);
+        return null;
+      default:
+        throw new JedisConnectionException("Unknown reply: " + (char) b);
+    }
+  }
+
+  private static ByteBuf processBulkReply(final SocketChannel channel, final RedisInputStream is) {
+    final int len = is.readIntCrLf();
+    if (len == -1) {
+      return null;
+    }
+
+    // todo
+    ByteBuf byteBuf = PooledByteBufAllocator.DEFAULT.ioBuffer(len);
+    try {
+      byteBuf.writeBytes(channel, byteBuf.writableBytes());
+    } catch (IOException e) {
+      throw new JedisConnectionException(e);
+    }
+
+    // read 2 more bytes for the command delimiter
+    is.readByte();
+    is.readByte();
+
+    return byteBuf;
+  }
+
+  private static List<Object> processMultiBulkReply(final SocketChannel channel, final RedisInputStream is) {
+    final int num = is.readIntCrLf();
+    if (num == -1) {
+      return null;
+    }
+    final List<Object> ret = new ArrayList<>(num);
+    for (int i = 0; i < num; i++) {
+      try {
+        ret.add(readByteBuf(channel, is));
+      } catch (JedisDataException e) {
+        ret.add(e);
+      }
+    }
+    return ret;
   }
 
   private static byte[] processStatusCodeReply(final RedisInputStream is) {

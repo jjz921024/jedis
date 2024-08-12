@@ -3,6 +3,8 @@ package redis.clients.jedis;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.StandardSocketOptions;
+import java.nio.channels.SocketChannel;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -63,7 +65,7 @@ public class DefaultJedisSocketFactory implements JedisSocketFactory {
     JedisConnectionException jce = new JedisConnectionException("Failed to connect to any host resolved for DNS name.");
     for (InetAddress host : hosts) {
       try {
-        Socket socket = new Socket();
+        /*Socket socket = new Socket();
 
         socket.setReuseAddress(true);
         socket.setKeepAlive(true); // Will monitor the TCP connection is valid
@@ -71,7 +73,20 @@ public class DefaultJedisSocketFactory implements JedisSocketFactory {
         socket.setSoLinger(true, 0); // Control calls close () method, the underlying socket is closed immediately
 
         socket.connect(new InetSocketAddress(host.getHostAddress(), hostAndPort.getPort()), connectionTimeout);
-        return socket;
+        return socket; */
+
+        SocketChannel socketChannel = SocketChannel.open();
+        socketChannel.setOption(StandardSocketOptions.SO_REUSEADDR, true);
+        socketChannel.setOption(StandardSocketOptions.SO_KEEPALIVE, true);
+        socketChannel.setOption(StandardSocketOptions.TCP_NODELAY, true);
+        socketChannel.setOption(StandardSocketOptions.SO_LINGER, 0);
+        socketChannel.configureBlocking(true);
+
+        socketChannel.connect(new InetSocketAddress(host.getHostAddress(), hostAndPort.getPort()));
+        // TODO: connect Timeout
+        socketChannel.finishConnect();
+
+        return socketChannel.socket();
       } catch (Exception e) {
         jce.addSuppressed(e);
       }

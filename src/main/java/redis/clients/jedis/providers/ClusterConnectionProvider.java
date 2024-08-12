@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Set;
 import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
 
+import redis.clients.jedis.ByteBufCmdArgs;
 import redis.clients.jedis.ClusterCommandArguments;
 import redis.clients.jedis.CommandArguments;
 import redis.clients.jedis.HostAndPort;
@@ -77,6 +78,11 @@ public class ClusterConnectionProvider implements ConnectionProvider {
   @Override
   public Connection getConnection(CommandArguments args) {
     final int slot = ((ClusterCommandArguments) args).getCommandHashSlot();
+    return slot >= 0 ? getConnectionFromSlot(slot) : getConnection();
+  }
+
+  public Connection getConnection(ByteBufCmdArgs args) {
+    final int slot = args.getCommandHashSlot();
     return slot >= 0 ? getConnectionFromSlot(slot) : getConnection();
   }
 

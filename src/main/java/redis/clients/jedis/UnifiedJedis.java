@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
+
+import io.netty.buffer.ByteBuf;
 import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
 import org.json.JSONArray;
 
@@ -4539,5 +4541,10 @@ public class UnifiedJedis implements JedisCommands, JedisBinaryCommands,
 
   public Object executeCommand(CommandArguments args) {
     return executeCommand(new CommandObject<>(args, BuilderFactory.RAW_OBJECT));
+  }
+
+  public Object sendCommand(byte[] sampleKey, ProtocolCommand cmd, ByteBuf... args) {
+    ByteBufCmdArgs cmdArgs = new ByteBufCmdArgs(cmd).addObjects(args).processKey(sampleKey);
+    return executor.executeCommand(cmdArgs);
   }
 }

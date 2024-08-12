@@ -7,6 +7,7 @@ import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import redis.clients.jedis.ByteBufCmdArgs;
 import redis.clients.jedis.CommandObject;
 import redis.clients.jedis.Connection;
 import redis.clients.jedis.Protocol;
@@ -101,6 +102,63 @@ public class ClusterCommandExecutor implements CommandExecutor {
    */
   protected <T> T execute(Connection connection, CommandObject<T> commandObject) {
     return connection.executeCommand(commandObject);
+  }
+
+  @Override
+  public Object executeCommand(ByteBufCmdArgs cmdArgs) {
+    Instant deadline = Instant.now().plus(maxTotalRetriesDuration);
+
+    JedisRedirectionException redirect = null;
+    int consecutiveConnectionFailures = 0;
+    Exception lastException = null;
+    for (int attemptsLeft = this.maxAttempts; attemptsLeft > 0; attemptsLeft--) {
+      Connection connection = null;
+      try {
+        if (redirect != null) {
+          connection = provider.getConnection(redirect.getTargetNode());
+          if (redirect instanceof JedisAskDataException) {
+            connection.executeCommand(Protocol.Command.ASKING);
+          }
+        } else {
+          connection = provider.getConnection(cmdArgs);
+        }
+
+        return connection.executeCommand(cmdArgs);
+
+      } catch (JedisConnectionException jce) {
+        lastException = jce;
+        ++consecutiveConnectionFailures;
+        log.debug("Failed connecting to Redis: {}", connection, jce);
+        // "- 1" because we just did one, but the attemptsLeft counter hasn't been decremented yet
+        boolean reset = handleConnectionProblem(attemptsLeft - 1, consecutiveConnectionFailures, deadline);
+        if (reset) {
+          consecutiveConnectionFailures = 0;
+          redirect = null;
+        }
+      } catch (JedisRedirectionException jre) {
+        // avoid updating lastException if it is a connection exception
+        if (lastException == null || lastException instanceof JedisRedirectionException) {
+          lastException = jre;
+        }
+        consecutiveConnectionFailures = 0;
+        redirect = jre;
+        // if MOVED redirection occurred,
+        if (jre instanceof JedisMovedDataException) {
+          // it rebuilds cluster's slot cache recommended by Redis cluster specification
+          provider.renewSlotCache(connection);
+        }
+      } finally {
+        IOUtils.closeQuietly(connection);
+      }
+      if (Instant.now().isAfter(deadline)) {
+        throw new JedisClusterOperationException("Cluster retry deadline exceeded.");
+      }
+    }
+
+    JedisClusterOperationException maxAttemptsException
+        = new JedisClusterOperationException("No more cluster attempts left.");
+    maxAttemptsException.addSuppressed(lastException);
+    throw maxAttemptsException;
   }
 
   /**
